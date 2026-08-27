@@ -1,0 +1,27 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "t:name"
+handle = "vitrazza-discount-code"
+type = "function"
+uid = "327ca7a9-792b-1f21-d5cf-fcbd72a200adfc4b177e"
+description = "t:description"
+
+  # Links this function to the settings UI rendered in the discount details page.
+  # Without it, the admin won't offer the function under "Create discount".
+  [extensions.ui]
+  handle = "discount-settings"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [[extensions.targeting]]
+  target = "cart.delivery-options.discounts.generate.run"
+  input_query = "src/cart_delivery_options_discounts_generate_run.graphql"
+  export = "cart-delivery-options-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"

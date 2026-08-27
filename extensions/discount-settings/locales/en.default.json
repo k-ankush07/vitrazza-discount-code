@@ -1,0 +1,4 @@
+{
+  "name": "Tiered cart discount",
+  "description": "Tiered amount off the order based on cart subtotal"
+}
