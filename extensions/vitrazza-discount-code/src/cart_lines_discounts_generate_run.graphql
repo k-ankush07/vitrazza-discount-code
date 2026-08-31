@@ -19,5 +19,8 @@ query CartInput {
   }
   discount {
     discountClasses
+    metafield(namespace: "$app", key: "function-configuration") {
+      value
+    }
   }
 }

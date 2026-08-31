@@ -1,11 +1,5 @@
 import {render} from 'preact';
-
-
-const TIERS = [
-  {spend: 350, save: 50},
-  {spend: 600, save: 100},
-  {spend: 850, save: 150},
-];
+import {useState, useEffect} from 'preact/hooks';
 
 export default async () => {
   render(<DiscountSettings />, document.body);
@@ -18,6 +12,19 @@ export default async () => {
 };
 
 function DiscountSettings() {
+  const [tiers, setTiers] = useState(/** @type {{spend:number,save:number}[]} */ ([]));
+
+  useEffect(() => {
+    try {
+      const raw = shopify.data?.metafield?.value; 
+      const parsed = raw ? JSON.parse(raw) : {tiers: []};
+      setTiers(parsed.tiers ?? []);
+    } catch (e) {
+      console.error('Could not parse tier configuration', e);
+      setTiers([]);
+    }
+  }, []);
+
   return (
     <s-function-settings>
       <s-section heading="Tiered cart discount">
@@ -27,13 +34,17 @@ function DiscountSettings() {
           Gift cards are excluded — they don't count toward the spend threshold
           and are never discounted.
         </s-paragraph>
-        <s-unordered-list>
-          {TIERS.map((tier) => (
-            <s-list-item key={tier.spend}>
-              Spend ${tier.spend} or more — save ${tier.save}
-            </s-list-item>
-          ))}
-        </s-unordered-list>
+        {tiers.length > 0 ? (
+          <s-unordered-list>
+            {tiers.map((tier) => (
+              <s-list-item key={tier.spend}>
+                Spend ${tier.spend} or more — save ${tier.save}
+              </s-list-item>
+            ))}
+          </s-unordered-list>
+        ) : (
+          <s-paragraph>No tiers configured for this discount.</s-paragraph>
+        )}
         <s-paragraph>
           These amounts are set in the app's discount function and can't be
           edited here.

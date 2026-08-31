@@ -12,7 +12,6 @@ import {
   * @param {RunInput} input
   * @returns {CartLinesDiscountsGenerateRunResult}
   */
-
 export function cartLinesDiscountsGenerateRun(input) {
   if (!input.cart.lines.length) {
     return { operations: [] };
@@ -23,6 +22,23 @@ export function cartLinesDiscountsGenerateRun(input) {
   );
 
   if (!hasOrderDiscountClass) {
+    return { operations: [] };
+  }
+
+  // Tiers now come from the function's metafield, not a hardcoded list.
+  /** @type {{tiers: {spend: number, save: number}[]}} */
+  let configuration = {tiers: []};
+  try {
+    configuration = JSON.parse(input.discount.metafield?.value ?? '{"tiers":[]}');
+  } catch {
+    configuration = {tiers: []};
+  }
+
+  const tiers = (configuration.tiers ?? [])
+    .filter((t) => t.spend > 0 && t.save > 0)
+    .sort((a, b) => b.spend - a.spend); // highest spend checked first
+
+  if (!tiers.length) {
     return { operations: [] };
   }
 
@@ -45,17 +61,11 @@ export function cartLinesDiscountsGenerateRun(input) {
   }, 0);
 
   let discountAmount = 0;
-  let message = '';
-
-  if (cartSubtotal >= 850) {
-    discountAmount = 150;
-    message = 'TIER 3: $150 OFF';
-  } else if (cartSubtotal >= 600) {
-    discountAmount = 100;
-    message = 'TIER 2: $100 OFF';
-  } else if (cartSubtotal >= 350) {
-    discountAmount = 50;
-    message = 'TIER 1: $50 OFF';
+  for (const tier of tiers) {
+    if (cartSubtotal >= tier.spend) {
+      discountAmount = tier.save;
+      break;
+    }
   }
 
   if (discountAmount === 0) {
@@ -67,7 +77,7 @@ export function cartLinesDiscountsGenerateRun(input) {
       orderDiscountsAdd: {
         candidates: [
           {
-            message: message,
+            message: `SAVE $${discountAmount}`,
             targets: [
               {
                 orderSubtotal: {
