@@ -13,16 +13,21 @@ import { gidToId } from '../../../../shared/utils/gid';
 /** @typedef {import('../../../../shared/models/discount').DiscountListItem} DiscountListItem */
 /** @typedef {{spend: string, save: string}} Tier */
 
-const DEFAULT_TIERS = [
-  { spend: '350', save: '50' },
-  { spend: '600', save: '100' },
-  { spend: '850', save: '150' },
-];
+// combines is no longer user-controlled — always false so the code
+// never stacks with existing percentage-off codes.
+const COMBINES_WITH_ORDER_DISCOUNTS = false;
 
 const EMPTY_FORM = {
-  code: 'SPENDSAVE',
-  combines: false,
-  tiers: DEFAULT_TIERS,
+  code: '',
+  tiers: [{ spend: '', save: '' }],
+};
+
+/** @param {{spend: number|string, save: number|string}} tier */
+const formatTierLine = (tier) => {
+  const spend = Number(tier.spend);
+  const save = Number(tier.save);
+  if (!spend || !save) return null;
+  return `Spend $${spend}+ — customer saves $${save}`;
 };
 
 export default function DiscountPage() {
@@ -40,7 +45,6 @@ export default function DiscountPage() {
   // Form state — shared between "create" and "edit" modes.
   const [editingId, setEditingId] = useState(/** @type {string | null} */(null));
   const [code, setCode] = useState(EMPTY_FORM.code);
-  const [combines, setCombines] = useState(EMPTY_FORM.combines);
   const [tiers, setTiers] = useState(/** @type {Tier[]} */(EMPTY_FORM.tiers));
 
   const [status, setStatus] = useState('loading');
@@ -135,7 +139,6 @@ export default function DiscountPage() {
   const resetForm = () => {
     setEditingId(null);
     setCode(EMPTY_FORM.code);
-    setCombines(EMPTY_FORM.combines);
     setTiers(EMPTY_FORM.tiers);
     setError(null);
     setCreatedId(null);
@@ -145,33 +148,35 @@ export default function DiscountPage() {
   const startEdit = (discount) => {
     setEditingId(discount.id);
     setCode(discount.code);
-    setCombines(discount.combinesWithOrderDiscounts);
     setTiers(
       discount.tiers.length
         ? discount.tiers.map((t) => ({
-            spend: String(t.spend),
-            save: String(t.save),
-          }))
+          spend: String(t.spend),
+          save: String(t.save),
+        }))
         : [{ spend: '', save: '' }],
     );
     setError(null);
     setCreatedId(null);
   };
 
+  // Called directly from the button's onClick — no <s-form>/native submit
+  // involved, so this fires the same way in both create and edit mode and
+  // doesn't get tangled up with the admin's top "Unsaved changes" save bar.
   const handleSubmit = async () => {
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) {
       setError('Enter a discount code');
-      throw new Error('Validation failed');
+      return;
     }
     if (!editingId && !functionId) {
       setError('Select a discount function');
-      throw new Error('Validation failed');
+      return;
     }
 
     const sortedTiers = parseTiers();
     if (!sortedTiers) {
-      throw new Error('Validation failed');
+      return;
     }
 
     setStatus('saving');
@@ -183,7 +188,7 @@ export default function DiscountPage() {
         await updateDiscountCode({
           id: editingId,
           code: trimmed,
-          combinesWithOrderDiscounts: combines,
+          combinesWithOrderDiscounts: COMBINES_WITH_ORDER_DISCOUNTS,
           configuration: { tiers: sortedTiers },
         });
         resetForm();
@@ -191,13 +196,12 @@ export default function DiscountPage() {
         const discountId = await createDiscountCode({
           code: trimmed,
           functionId,
-          combinesWithOrderDiscounts: combines,
+          combinesWithOrderDiscounts: COMBINES_WITH_ORDER_DISCOUNTS,
           // model layer writes this as JSON into the function's metafield
           configuration: { tiers: sortedTiers },
         });
         setCreatedId(discountId);
         setCode(EMPTY_FORM.code);
-        setCombines(EMPTY_FORM.combines);
         setTiers(EMPTY_FORM.tiers);
       }
       setStatus('idle');
@@ -209,13 +213,7 @@ export default function DiscountPage() {
           : 'Could not save the discount',
       );
       setStatus('idle');
-      throw saveError;
     }
-  };
-
-  /** @param {any} event */
-  const onSubmit = (event) => {
-    event?.waitUntil?.(handleSubmit());
   };
 
   /** @param {string} id */
@@ -264,6 +262,7 @@ export default function DiscountPage() {
   };
 
   const isLoading = status === 'loading';
+  const activeCount = discounts.filter((d) => d.status === 'ACTIVE').length;
 
   return (
     <s-page heading="Create discount code">
@@ -296,69 +295,78 @@ export default function DiscountPage() {
       {!isLoading && (
         <s-section heading="Tiers">
           <s-paragraph>
-            Applied to the order subtotal once the code is entered. Only the
-            highest matching tier applies — add as many tiers as you need.
+            Set spend thresholds for the order subtotal. Only the highest
+            tier a customer qualifies for applies.
           </s-paragraph>
 
-          <s-stack direction="block" gap="loose">
-            {tiers.map((tier, index) => (
-              <s-box
-                key={index}
-                padding="base"
-                border="base"
-                borderRadius="base"
-              >
-                <s-stack direction="block" gap="base">
-                  <s-stack direction="inline" gap="base">
-                    <s-number-field
-                      label="Spend at least"
-                      value={tier.spend}
-                      onInput={(e) =>
-                        updateTier(
-                          index,
-                          'spend',
-                    /** @type {HTMLInputElement} */(e.target).value,
-                        )
-                      }
-                      prefix="$"
-                    />
-                    <s-number-field
-                      label="Customer saves"
-                      value={tier.save}
-                      onInput={(e) =>
-                        updateTier(
-                          index,
-                          'save',
-                    /** @type {HTMLInputElement} */(e.target).value,
-                        )
-                      }
-                      prefix="$"
-                    />
-                  </s-stack>
+          <s-stack direction="block" gap="base">
+            {tiers.map((tier, index) => {
+              const preview = formatTierLine(tier);
+              return (
+                <s-box
+                  key={index}
+                  padding="base"
+                  border="base"
+                  borderRadius="base"
+                >
+                  <s-stack direction="block" gap="base">
+                    <s-text fontWeight="bold">Tier {index + 1}</s-text>
 
-                  {tiers.length > 1 && (
-                    <s-stack direction="inline" justifyContent="end">
-                      <s-button variant="tertiary" onClick={() => removeTier(index)}>
-                        Remove
-                      </s-button>
+                    <s-stack direction="inline" gap="base">
+                      <s-number-field
+                        label="Spend at least"
+                        value={tier.spend}
+                        onInput={(e) =>
+                          updateTier(
+                            index,
+                            'spend',
+                    /** @type {HTMLInputElement} */(e.target).value,
+                          )
+                        }
+                        prefix="$"
+                      />
+                      <s-number-field
+                        label="Customer saves"
+                        value={tier.save}
+                        onInput={(e) =>
+                          updateTier(
+                            index,
+                            'save',
+                    /** @type {HTMLInputElement} */(e.target).value,
+                          )
+                        }
+                        prefix="$"
+                      />
                     </s-stack>
-                  )}
-                </s-stack>
-              </s-box>
-            ))}
 
-            <s-stack direction="inline" justifyContent="end">
-              <s-button variant="secondary" onClick={addTier}>
-                Add tier
-              </s-button>
-            </s-stack>
+                    {preview && <s-paragraph>{preview}</s-paragraph>}
+
+                    {tiers.length > 1 && (
+                      <s-stack direction="inline" justifyContent="end">
+                        <s-button variant="secondary" tone="critical" onClick={() => removeTier(index)}>
+                          Remove tier
+                        </s-button>
+                      </s-stack>
+                    )}
+                  </s-stack>
+                </s-box>
+              );
+            })}
+
+            <s-box padding-block-start="loose">
+              <s-stack direction="inline" justifyContent="end">
+                <s-button variant="secondary" onClick={addTier}>
+                  Add tier
+                </s-button>
+              </s-stack>
+            </s-box>
           </s-stack>
         </s-section>
       )}
 
       {!isLoading && (
         <s-section heading={editingId ? 'Edit discount code' : 'Discount code'}>
-          <s-form onSubmit={onSubmit}>
+          <s-stack direction="block" gap="base">
             <s-text-field
               label="Code"
               name="code"
@@ -392,23 +400,11 @@ export default function DiscountPage() {
               </s-select>
             )}
 
-            <s-switch
-              label="Combine with other order discounts"
-              name="combines"
-              checked={combines}
-              onChange={(e) =>
-                setCombines(
-                  /** @type {HTMLInputElement} */(e.target).checked,
-                )
-              }
-              details="Leave off so this code can't stack with the existing percentage-off codes"
-            />
-
             <s-stack direction="inline" gap="base">
               <s-button
                 variant="primary"
-                type="submit"
                 loading={status === 'saving'}
+                onClick={handleSubmit}
               >
                 {editingId ? 'Update discount' : 'Create discount'}
               </s-button>
@@ -419,11 +415,18 @@ export default function DiscountPage() {
                 </s-button>
               )}
             </s-stack>
-          </s-form>
+          </s-stack>
         </s-section>
       )}
 
-      <s-section heading="Existing discounts">
+      <s-section
+        slot="aside"
+        heading={
+          discounts.length
+            ? `Existing discounts (${activeCount} active)`
+            : 'Existing discounts'
+        }
+      >
         {listError && (
           <s-banner tone="critical">{listError}</s-banner>
         )}
@@ -433,19 +436,20 @@ export default function DiscountPage() {
         )}
 
         {listStatus === 'idle' && discounts.length === 0 && (
-          <s-paragraph>No discounts created yet.</s-paragraph>
+          <s-paragraph>
+            No discount codes yet. Create one above to start offering
+            spend-based savings.
+          </s-paragraph>
         )}
 
         {listStatus === 'idle' && discounts.length > 0 && (
-          <s-stack direction="block" gap="loose">
+          <s-stack direction="block" gap="base">
             {discounts.map((discount) => {
               const isActive = discount.status === 'ACTIVE';
               const action = rowActions[discount.id];
-              const tierSummary = discount.tiers.length
-                ? discount.tiers
-                    .map((t) => `$${t.spend}→$${t.save}`)
-                    .join(', ')
-                : 'No tiers configured';
+              const tierLines = discount.tiers
+                .map(formatTierLine)
+                .filter(Boolean);
 
               return (
                 <s-box
@@ -454,9 +458,9 @@ export default function DiscountPage() {
                   border="base"
                   borderRadius="base"
                 >
-                  <s-stack direction="block" gap="tight">
+                  <s-stack direction="block" gap="base">
                     <s-stack direction="inline" justifyContent="space-between">
-                      <s-stack direction="inline" gap="tight">
+                      <s-stack direction="inline" gap="base">
                         <s-text fontWeight="bold">{discount.code}</s-text>
                         <s-badge tone={isActive ? 'success' : 'neutral'}>
                           {discount.status}
@@ -470,16 +474,19 @@ export default function DiscountPage() {
                       </s-link>
                     </s-stack>
 
-                    <s-paragraph>{tierSummary}</s-paragraph>
-                    <s-paragraph>
-                      {discount.combinesWithOrderDiscounts
-                        ? 'Combines with other order discounts'
-                        : "Doesn't combine with other order discounts"}
-                    </s-paragraph>
+                    <s-stack direction="block" gap="extraTight">
+                      {tierLines.length ? (
+                        tierLines.map((line, i) => (
+                          <s-paragraph key={i}>{line}</s-paragraph>
+                        ))
+                      ) : (
+                        <s-paragraph>No tiers configured</s-paragraph>
+                      )}
+                    </s-stack>
 
-                    <s-stack direction="inline" gap="base" justifyContent="end">
+                    <s-stack direction="inline" gap="base" justifyContent="end" >
                       <s-button
-                        variant="tertiary"
+                        variant="secondary"
                         onClick={() => startEdit(discount)}
                       >
                         Edit
@@ -492,7 +499,7 @@ export default function DiscountPage() {
                         {isActive ? 'Deactivate' : 'Activate'}
                       </s-button>
                       <s-button
-                        variant="tertiary"
+                        variant="secondary"
                         tone="critical"
                         loading={action === 'deleting'}
                         onClick={() => handleDelete(discount.id)}
